@@ -1,0 +1,36 @@
+# Python Engine — .dockerignore
+# Keeps the build context lean: excludes venvs, caches, secrets, and IDE files
+
+# Virtual environments
+.venv/
+python-engine/
+env/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# Secrets and local config (injected via docker-compose env_file)
+.env
+*.env
+
+# Git
+.git/
+.gitignore
+
+# Logs
+*.log
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

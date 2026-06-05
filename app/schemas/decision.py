@@ -55,3 +55,11 @@ class TradeDecision(BaseModel):
         ..., description="Per-timeframe directional vote based on bias_score"
     )
     timestamp: datetime = Field(..., description="UTC timestamp of when the decision was evaluated")
+
+    # --- Phase 7: Order Execution details ---
+    execution_status: Optional[Literal["IDLE", "PENDING", "AWAITING_CONFIRMATION", "AUTO_EXECUTED", "MANUALLY_EXECUTED"]] = Field(
+        None, description="Actual execution status from the execution bridge"
+    )
+    executed_at: Optional[str] = Field(None, description="Timestamp of trade execution")
+    trade_id: Optional[str] = Field(None, description="Supabase trade record UUID")
+

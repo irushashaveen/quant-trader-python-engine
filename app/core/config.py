@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     TAKE_PROFIT_FIXED_R: float = 2.0      # Fixed R multiple used as TP1 fallback
     TAKE_PROFIT_2_R: float = 3.0          # Fixed R multiple always used for TP2
 
+    # --- Phase 7: Database & Execution Config ---
+    MONGODB_URI: str | None = None
+    SUPABASE_URL: str | None = None
+    SUPABASE_KEY: str | None = None
+    DEFAULT_LEVERAGE: int = 5
+    RISK_PERCENTAGE: float = 1.0          # 1% risk per trade
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -49,3 +56,4 @@ class Settings(BaseSettings):
     )
 
 settings = Settings()
+

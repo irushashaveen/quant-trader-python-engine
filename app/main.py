@@ -9,12 +9,19 @@ from app.core.config import settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Startup: Start background monitoring task
+    from app.services.trade_manager import trade_manager
+    await trade_manager.start_monitoring()
+    
     yield
-    # Shutdown: Close CCXT exchange connection
+    
+    # Shutdown: Stop background task & Close CCXT exchange connection
+    await trade_manager.stop_monitoring()
     from app.services.exchange_service import exchange_service
     await exchange_service.close()
 
 app = FastAPI(
+
     title="Quant Trader Python Engine",
     description="Engine for execution, market data, strategy logic, and trade management.",
     version="0.1.0",
