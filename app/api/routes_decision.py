@@ -6,8 +6,9 @@ from pydantic import BaseModel, Field
 
 from app.schemas.analysis import MarketStateAnalysisResponse
 from app.schemas.decision import TradeDecision
-from app.services.market_data_service import get_multi_timeframe_ohlcv
-from app.services.analysis_service import analyze_market_state
+from app.services.market_data_service import get_multi_timeframe_ohlcv, fetch_order_flow_data
+from app.services.smc_engine import run_smc_analysis
+from app.services.order_flow_engine import evaluate_order_flow
 from app.services.decision_service import evaluate_trade_decision
 from app.services.trade_manager import trade_manager
 from app.core.config import settings
@@ -52,9 +53,9 @@ async def evaluate_decision_live(
         active_key = f"active_trade:{symbol}"
         active_trade_str = await r_client.get(active_key)
         
-        # 2. Fetch multi-timeframe OHLCV & run analysis
+        # 2. Fetch multi-timeframe OHLCV & run SMC analysis
         timeframe_data = await get_multi_timeframe_ohlcv(symbol, timeframes, limit)
-        analysis = await analyze_market_state(symbol, timeframe_data)
+        analysis = await run_smc_analysis(symbol, timeframe_data)
 
         # Derive current price
         primary_tf = settings.PRIMARY_TIMEFRAME
@@ -63,8 +64,12 @@ async def evaluate_decision_live(
             raise HTTPException(status_code=502, detail="No candle data returned for any timeframe.")
         current_price = float(primary_candles[-1].close)
 
+        # Fetch and evaluate order flow filter data
+        order_flow_data = await fetch_order_flow_data(symbol)
+        order_flow_result = evaluate_order_flow(order_flow_data)
+
         # Evaluate decision
-        decision = evaluate_trade_decision(analysis, current_price)
+        decision = evaluate_trade_decision(analysis, current_price, order_flow_result)
 
         # 3. Handle active/executed overrides
         if active_trade_str:
@@ -128,8 +133,13 @@ async def confirm_trade(request: ConfirmTradeRequest = Body(...)):
         
         # 1. Fetch multi-timeframe OHLCV & run analysis to create snapshots
         timeframe_data = await get_multi_timeframe_ohlcv(request.symbol, ["1m", "5m", "15m", "1h", "4h"], 100)
-        analysis = await analyze_market_state(request.symbol, timeframe_data)
-        decision = evaluate_trade_decision(analysis, request.entry_price)
+        analysis = await run_smc_analysis(request.symbol, timeframe_data)
+        
+        # Fetch and evaluate order flow filter data
+        order_flow_data = await fetch_order_flow_data(request.symbol)
+        order_flow_result = evaluate_order_flow(order_flow_data)
+        
+        decision = evaluate_trade_decision(analysis, request.entry_price, order_flow_result)
         
         analysis_dict = analysis.model_dump() if hasattr(analysis, "model_dump") else analysis.dict()
         decision_dict = decision.model_dump() if hasattr(decision, "model_dump") else decision.dict()

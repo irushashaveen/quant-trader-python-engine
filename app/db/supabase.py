@@ -54,6 +54,17 @@ class SupabaseManager:
             logger.info(f"Supabase trade record created: {trade_id}")
             return trade_id
         except Exception as e:
+            # Check if it is a missing column error for the 'mode' field, and retry without it
+            if "column" in str(e).lower() and "mode" in str(e).lower():
+                logger.warning("Supabase trades table appears to miss the 'mode' column. Retrying insert without it.")
+                try:
+                    fallback_data = data.copy()
+                    fallback_data.pop("mode", None)
+                    await asyncio.to_thread(lambda: self.client.table("trades").insert(fallback_data).execute())
+                    logger.info(f"Supabase trade record created (fallback): {trade_id}")
+                    return trade_id
+                except Exception as fallback_err:
+                    logger.error(f"Fallback insert failed: {fallback_err}")
             logger.error(f"Failed to insert trade to Supabase: {e}. Falling back to simulated mode.")
             return trade_id
 

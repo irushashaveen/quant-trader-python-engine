@@ -111,6 +111,7 @@ class TradeManager:
         sizing = await self.calculate_position_size(symbol, entry, stop_loss)
         qty = sizing["quantity"]
         is_simulated = sizing["is_simulated"] or settings.BINANCE_API_KEY is None
+        mode = "TESTNET" if (is_simulated or settings.BINANCE_USE_TESTNET) else "LIVE"
 
         # Build trade dict
         trade_id = str(uuid_v4())
@@ -119,6 +120,7 @@ class TradeManager:
             "symbol": symbol,
             "direction": direction,
             "status": "ACTIVE",
+            "mode": mode,
             "entry_price": entry,
             "stop_loss": stop_loss,
             "take_profit_1": take_profit_1,
@@ -199,6 +201,7 @@ class TradeManager:
             "take_profit_1": take_profit_1,
             "take_profit_2": take_profit_2,
             "quantity": qty,
+            "sl_order_id": order_details.get("sl_order_id"),
             "order_details": order_details,
             "is_simulated": is_simulated,
             "sl_at_be": False,
@@ -243,15 +246,28 @@ class TradeManager:
             except Exception as e:
                 logger.error(f"Error during Binance close for {symbol}: {e}")
 
+        # Calculate actual PNL at current price
+        current_price = state["entry_price"]
+        try:
+            ticker = await exchange_service.fetch_ticker(symbol)
+            current_price = float(ticker.get("close") or ticker.get("last") or state["entry_price"])
+        except Exception as e:
+            logger.warning(f"Could not fetch live price for close PnL calculation: {e}")
+
+        pnl_pct = (current_price - state["entry_price"]) / state["entry_price"]
+        if state["direction"] == "SHORT":
+            pnl_pct = -pnl_pct
+        pnl_usdt = pnl_pct * state["entry_price"] * state["quantity"]
+
         # Update Supabase trade to CLOSED
         close_time = datetime.now(timezone.utc)
         await supabase_manager.update_trade_record(trade_id, {
             "status": "CLOSED",
             "closed_at": close_time,
             "close_reason": "MANUAL_CLOSE",
-            "final_pnl": 0.0 # Placeholder
+            "final_pnl": round(pnl_usdt, 4)
         })
-        await supabase_manager.log_trade_event(trade_id, "FULL_CLOSE", state["entry_price"], {"reason": "MANUAL_CLOSE"})
+        await supabase_manager.log_trade_event(trade_id, "FULL_CLOSE", current_price, {"reason": "MANUAL_CLOSE", "pnl": pnl_usdt})
 
         # Delete active trace in Redis
         await r_client.delete(active_key)
@@ -293,7 +309,7 @@ class TradeManager:
         current_price = entry
         try:
             # We can use fetch_ohlcv to get last close or tickers
-            ticker = await exchange_service.exchange.fetch_ticker(symbol)
+            ticker = await exchange_service.fetch_ticker(symbol)
             current_price = float(ticker.get("close") or ticker.get("last") or entry)
         except Exception as e:
             logger.warning(f"Could not fetch live price for {symbol}: {e}. Skipping check.")
@@ -312,29 +328,39 @@ class TradeManager:
             logger.info(f"TP1 hit for {symbol} @ {current_price}. Moving Stop Loss to Break-Even ({entry})")
             state["tp1_filled"] = True
             
+            success = True
             if not is_simulated:
                 try:
                     # Cancel old SL
-                    old_sl_id = state["order_details"].get("sl_order_id")
+                    old_sl_id = state["order_details"].get("sl_order_id") or state.get("sl_order_id")
                     if old_sl_id:
                         await exchange_service.exchange.cancel_order(old_sl_id, symbol)
                     
                     # Create new Stop Loss at Entry
                     new_sl_order = await exchange_service.create_stop_market_order(symbol, opp_side, state["quantity"], entry)
-                    state["order_details"]["sl_order_id"] = new_sl_order.get("id")
+                    new_sl_id = new_sl_order.get("id")
+                    state["order_details"]["sl_order_id"] = new_sl_id
+                    state["sl_order_id"] = new_sl_id
                 except Exception as ex:
                     logger.error(f"Failed to adjust SL order on exchange for {symbol}: {ex}")
+                    success = False
+            else:
+                new_sl_id = f"mock_sl_be_{trade_id[:8]}"
+                state["order_details"]["sl_order_id"] = new_sl_id
+                state["sl_order_id"] = new_sl_id
 
-            state["stop_loss"] = entry
-            state["sl_at_be"] = True
-            
-            # Save DB log
-            await supabase_manager.log_trade_event(trade_id, "PARTIAL_TP1_FILLED", tp1, {"new_sl": entry})
-            await supabase_manager.log_trade_event(trade_id, "SL_UPDATED_TO_BE", entry)
-            await supabase_manager.update_trade_record(trade_id, {"stop_loss": entry})
-            
-            # Save updated Redis state
-            await r_client.set(redis_key, json.dumps(state))
+            if success:
+                state["stop_loss"] = entry
+                state["sl_at_be"] = True
+                
+                # Save DB log
+                await supabase_manager.log_trade_event(trade_id, "PARTIAL_TP1_FILLED", tp1, {"new_sl": entry})
+                await supabase_manager.log_trade_event(trade_id, "SL_UPDATED_TO_BE", entry)
+                await supabase_manager.update_trade_record(trade_id, {"stop_loss": entry})
+                
+                # Immediately write the full updated state back to Redis
+                await r_client.set(redis_key, json.dumps(state))
+                logger.info(f"Successfully adjusted SL to BE and synced state to Redis for {symbol}")
 
         # --- B. Check TP2 (Full Close Win) ---
         elif tp2_hit:

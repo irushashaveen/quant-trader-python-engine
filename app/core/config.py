@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     SUPABASE_KEY: str | None = None
     DEFAULT_LEVERAGE: int = 5
     RISK_PERCENTAGE: float = 1.0          # 1% risk per trade
+    EXECUTION_MODE: str = "AUTO_EXECUTE"  # "AUTO_EXECUTE" or "FORCE_MANUAL"
 
     model_config = SettingsConfigDict(
         env_file=".env",

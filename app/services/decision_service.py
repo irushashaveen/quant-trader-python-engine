@@ -16,7 +16,7 @@ Pipeline (in order):
 """
 
 from datetime import datetime, timezone
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple, Any
 
 from app.core.config import settings
 from app.core.logging import logger
@@ -351,6 +351,7 @@ def _calculate_take_profits(
 def evaluate_trade_decision(
     analysis: MarketStateAnalysisResponse,
     current_price: float,
+    order_flow_result: Optional[Any] = None,
 ) -> TradeDecision:
     """
     Full 8-step pipeline converting a MarketStateAnalysisResponse into a TradeDecision.
@@ -489,6 +490,39 @@ def evaluate_trade_decision(
             timeframe_votes=votes,
             timestamp=datetime.now(timezone.utc),
         )
+
+    # Order Flow Veto Gate (Alpha Filter)
+    if order_flow_result is not None:
+        if order_flow_result.action == "VETO_LONG" and direction == "LONG":
+            reason_parts.append(f"VETO: {order_flow_result.reason}")
+            return TradeDecision(
+                symbol=analysis.symbol,
+                decision="REJECT_HIGH_RISK",
+                direction="NONE",
+                confidence_score=confidence_score,
+                aggregate_bias_score=analysis.aggregate_bias_score,
+                reason="Order flow vetoed long entry: " + " | ".join(reason_parts),
+                risk_profile=risk_profile,
+                no_trade_conditions=no_trade_conditions + ["ORDER_FLOW_VETO_LONG"],
+                requires_manual_confirmation=False,
+                timeframe_votes=votes,
+                timestamp=datetime.now(timezone.utc),
+            )
+        elif order_flow_result.action == "VETO_SHORT" and direction == "SHORT":
+            reason_parts.append(f"VETO: {order_flow_result.reason}")
+            return TradeDecision(
+                symbol=analysis.symbol,
+                decision="REJECT_HIGH_RISK",
+                direction="NONE",
+                confidence_score=confidence_score,
+                aggregate_bias_score=analysis.aggregate_bias_score,
+                reason="Order flow vetoed short entry: " + " | ".join(reason_parts),
+                risk_profile=risk_profile,
+                no_trade_conditions=no_trade_conditions + ["ORDER_FLOW_VETO_SHORT"],
+                requires_manual_confirmation=False,
+                timeframe_votes=votes,
+                timestamp=datetime.now(timezone.utc),
+            )
 
     # H. Manual confirmation flag
     requires_manual = confidence_score < settings.AUTO_EXECUTE_CONFIDENCE

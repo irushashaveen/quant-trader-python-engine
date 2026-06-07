@@ -52,6 +52,7 @@ class DataLoader:
             config = {
                 'enableRateLimit': True,
                 'newUpdates': True, # Required by ccxt.pro to return only delta updates
+                'timeout': 10000,
             }
             if settings.BINANCE_API_KEY and settings.BINANCE_API_SECRET:
                 config['apiKey'] = settings.BINANCE_API_KEY
@@ -116,10 +117,16 @@ class DataLoader:
                 await asyncio.sleep(1)
 
     async def _watch_liquidations_loop(self, symbol: str):
+        import inspect
         while self.running:
             try:
                 # Institutional sweep detector
                 liquidations = await self.exchange.watch_liquidations(symbol)
+                
+                # Check for CCXT Pro double-nested coroutine bug
+                while inspect.iscoroutine(liquidations):
+                    liquidations = await liquidations
+                    
                 if not isinstance(liquidations, list):
                     liquidations = [liquidations]
                 for liq in liquidations:

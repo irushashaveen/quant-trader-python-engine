@@ -11,6 +11,7 @@ class ExchangeService:
         if self.exchange is None:
             config = {
                 'enableRateLimit': True,
+                'timeout': 10000,
             }
             if settings.BINANCE_API_KEY and settings.BINANCE_API_SECRET:
                 config['apiKey'] = settings.BINANCE_API_KEY
@@ -27,10 +28,14 @@ class ExchangeService:
                 try:
                     res = await self.exchange.fapiPrivateGetPositionSideDual()
                     if res and str(res.get('dualSidePosition')).lower() == 'true':
-                        logger.warning("CRITICAL WARNING: Hedge Mode is ACTIVE on this Binance account. Orders using reduceOnly may fail. Please switch to One-Way Mode in Binance settings.")
+                        msg = "CRITICAL ERROR: Hedge Mode is ACTIVE on this Binance account. The engine's order logic requires One-Way Mode. Please switch to One-Way Mode in Binance settings before trading."
+                        logger.error(msg)
+                        raise RuntimeError(msg)
                     else:
                         logger.info("Verified: Binance account is in One-Way position mode.")
                 except Exception as e:
+                    if isinstance(e, RuntimeError):
+                        raise e
                     logger.warning(f"Could not verify Hedge/One-Way position mode: {e}")
                     
             logger.info("Exchange service initialized successfully (Binance USD-M Futures).")
@@ -51,6 +56,14 @@ class ExchangeService:
             return ohlcv
         except Exception as e:
             logger.error(f"Error fetching OHLCV from Binance for {symbol} on {timeframe}: {str(e)}")
+            raise e
+
+    async def fetch_ticker(self, symbol: str) -> Dict[str, Any]:
+        await self.initialize()
+        try:
+            return await self.exchange.fetch_ticker(symbol)
+        except Exception as e:
+            logger.error(f"Error fetching ticker from Binance for {symbol}: {str(e)}")
             raise e
 
     async def create_market_order(self, symbol: str, side: str, amount: float) -> Dict[str, Any]:
