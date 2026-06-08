@@ -20,6 +20,7 @@ from typing import Dict, List, Literal, Optional, Tuple, Any
 
 from app.core.config import settings
 from app.core.logging import logger
+from app.services.core_math_engine import get_primary_timeframe
 from app.schemas.analysis import (
     MarketStateAnalysisResponse,
     TimeframeAnalysis,
@@ -359,8 +360,9 @@ def evaluate_trade_decision(
     logger.info(f"Evaluating trade decision for {analysis.symbol} @ {current_price}")
 
     weights = settings.TIMEFRAME_WEIGHTS
-    primary_tf = settings.PRIMARY_TIMEFRAME
     tf_analyses = analysis.timeframe_analyses
+    # Derive primary timeframe dynamically from available analysis keys
+    primary_tf = get_primary_timeframe(list(tf_analyses.keys()))
 
     primary_analysis = tf_analyses.get(primary_tf)
 
