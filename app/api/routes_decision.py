@@ -98,7 +98,7 @@ async def evaluate_decision_live(
         )
 
         # 6. Evaluate decision
-        decision = evaluate_trade_decision(analysis, current_price, order_flow_result)
+        decision = await evaluate_trade_decision(analysis, current_price, order_flow_result)
 
         # 7. Handle active/executed overrides (unchanged DB logic)
         if active_trade_str:
@@ -216,7 +216,7 @@ async def confirm_trade(request: ConfirmTradeRequest = Body(...)):
             liquidations_stats=liq_stats
         )
 
-        decision = evaluate_trade_decision(analysis, request.entry_price, order_flow_result)
+        decision = await evaluate_trade_decision(analysis, request.entry_price, order_flow_result)
 
         analysis_dict = (
             analysis.model_dump() if hasattr(analysis, "model_dump") else analysis.dict()

@@ -349,7 +349,7 @@ def _calculate_take_profits(
 # Main Entry Point
 # ---------------------------------------------------------------------------
 
-def evaluate_trade_decision(
+async def evaluate_trade_decision(
     analysis: MarketStateAnalysisResponse,
     current_price: float,
     order_flow_result: Optional[Any] = None,
@@ -358,6 +358,32 @@ def evaluate_trade_decision(
     Full 8-step pipeline converting a MarketStateAnalysisResponse into a TradeDecision.
     """
     logger.info(f"Evaluating trade decision for {analysis.symbol} @ {current_price}")
+
+    # Fetch latest macro event and calculate ESI / BTC correlation risk
+    macro_classification = "NEUTRAL"
+    macro_event_name = None
+    
+    from app.db.mongo import mongo_manager
+    mongo_manager.initialize()
+    if mongo_manager.db is not None:
+        try:
+            cursor = mongo_manager.db.macro_calendar.find({
+                "value": {"$ne": None},
+                "forecast": {"$ne": None}
+            }).sort([("release_date", -1)]).limit(1)
+            events = await cursor.to_list(length=1)
+            if events:
+                event = events[0]
+                macro_event_name = event.get("source_series", "Unknown")
+                actual = event.get("value")
+                forecast = event.get("forecast")
+                
+                if actual is not None and forecast is not None:
+                    from app.services.macro_risk_engine import calculate_macro_risk
+                    risk_res = calculate_macro_risk(macro_event_name, float(actual), float(forecast))
+                    macro_classification = risk_res["classification"]
+        except Exception as e:
+            logger.error(f"Error fetching macro calendar event from MongoDB: {e}")
 
     weights = settings.TIMEFRAME_WEIGHTS
     tf_analyses = analysis.timeframe_analyses
@@ -525,6 +551,23 @@ def evaluate_trade_decision(
                 timeframe_votes=votes,
                 timestamp=datetime.now(timezone.utc),
             )
+
+    # Institutional Macro Risk Gate (Alpha Filter) - Runs simultaneously with OrderFlow Veto
+    if macro_classification == "HIGH_RISK_BEARISH" and direction == "LONG":
+        reason_parts.append("VETO: HIGH_RISK_BEARISH Macro catalyst detected")
+        return TradeDecision(
+            symbol=analysis.symbol,
+            decision="REJECT_HIGH_RISK",
+            direction="NONE",
+            confidence_score=confidence_score,
+            aggregate_bias_score=analysis.aggregate_bias_score,
+            reason=f"Institutional macro risk is bearish. LONG trades blocked. | Event: {macro_event_name} | " + " | ".join(reason_parts),
+            risk_profile=risk_profile,
+            no_trade_conditions=no_trade_conditions + ["MACRO_BEARISH_VETO"],
+            requires_manual_confirmation=False,
+            timeframe_votes=votes,
+            timestamp=datetime.now(timezone.utc),
+        )
 
     # H. Manual confirmation flag
     requires_manual = confidence_score < settings.AUTO_EXECUTE_CONFIDENCE

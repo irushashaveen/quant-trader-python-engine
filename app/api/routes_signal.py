@@ -89,7 +89,7 @@ async def receive_signal(signal: TradeSignal):
     )
 
     # 7. Decision pipeline
-    decision = evaluate_trade_decision(analysis, current_price, order_flow_result)
+    decision = await evaluate_trade_decision(analysis, current_price, order_flow_result)
 
     decision_dict = (
         decision.model_dump() if hasattr(decision, "model_dump") else decision.dict()
